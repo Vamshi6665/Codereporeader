@@ -1,94 +1,92 @@
 #!/usr/bin/env python3
 """
-CodeRepoReader — CLI
-====================
-Analyze any GitHub/local project and generate a beginner-friendly summary
-using the OpenAI SDK.
+CodeRepoReader CLI — the same analyzer and model pipeline as the web app, in a terminal.
 
-Usage:
-    python cli.py                          # analyze current directory
-    python cli.py /path/to/project         # analyze a local folder
-    python cli.py https://github.com/...   # download + analyze a GitHub repo
-
-Setup:
-    export OPENAI_API_KEY=sk-...
-    (optional) export OPENAI_MODEL=gpt-4o-mini
-    (optional) export OPENAI_BASE_URL=https://models.github.ai/inference
+    python cli.py                                   # analyze the current folder
+    python cli.py path/to/project                   # analyze a local folder
+    python cli.py https://github.com/owner/repo     # analyze a public GitHub repo
+    python cli.py . --map                           # print the repository map sent to the model
+    python cli.py . --ask "How does auth work?"     # stream an answer (needs OPENAI_API_KEY)
 """
 
+import argparse
 import os
 import sys
-import shutil
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "api"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from analyzer import collect_project_info          # noqa: E402
-from github_fetch import download_repo_tarball      # noqa: E402
-from summarizer import summarize_with_openai        # noqa: E402
+from server import llm  # noqa: E402
+from server.repo_analysis import analyze, build_file_pack, build_repo_map  # noqa: E402
+from server.repo_source import RepoError, load_github, load_local_dir, resolve_github  # noqa: E402
 
 
-def print_banner():
-    print(
-        """
-╔══════════════════════════════════════════════╗
-║        🔍 CodeRepoReader — CLI                ║
-║          Powered by the OpenAI SDK            ║
-╚══════════════════════════════════════════════╝
-"""
-    )
+def load(target):
+    if target.startswith(("http://", "https://", "git@")) or (target.count("/") == 1 and not os.path.exists(target)):
+        meta = resolve_github(target)
+        print(f"Resolved {meta['full_name']} @ {meta['ref']} ({meta['sha'][:7]})", file=sys.stderr)
+        return meta, load_github(meta["owner"], meta["repo"], meta["sha"])
+    path = os.path.abspath(target)
+    if not os.path.isdir(path):
+        raise RepoError(f"Folder not found: {path}")
+    vr = load_local_dir(path)
+    return {"full_name": vr.name, "ref": None, "sha": ""}, vr
 
 
 def main():
-    print_banner()
-
-    work_dir = None
-    if len(sys.argv) > 1:
-        target = sys.argv[1]
-        if target.startswith(("http://", "https://", "git@")):
-            print("🌐  GitHub URL detected — downloading repo...\n")
-            token = os.environ.get("GITHUB_TOKEN", "").strip() or None
-            try:
-                project_path, work_dir = download_repo_tarball(target, token=token)
-            except Exception as e:  # noqa: BLE001
-                print(f"❌  Download failed: {e}")
-                return
-        else:
-            project_path = os.path.abspath(target)
-    else:
-        project_path = os.path.abspath(".")
-
-    if not os.path.exists(project_path):
-        print(f"❌  Path not found: {project_path}")
-        return
-
-    print(f"📁  Project: {project_path}\n")
+    ap = argparse.ArgumentParser(description="Analyze a codebase and ask questions about it.")
+    ap.add_argument("target", nargs="?", default=".", help="local folder or GitHub URL (default: current folder)")
+    ap.add_argument("--map", action="store_true", help="print the repository map")
+    ap.add_argument("--ask", metavar="QUESTION", help="ask a question and stream the answer")
+    ap.add_argument("--deep", action="store_true", help="use Deep mode")
+    args = ap.parse_args()
 
     try:
-        print("📊  Step 1: Analyzing project structure...\n")
-        project_info = collect_project_info(project_path)
-        print(f"  ✅ Found {len(project_info['files'])} key files\n")
+        meta, vr = load(args.target)
+    except RepoError as e:
+        sys.exit(f"Error: {e.message}")
 
-        print("🤖  Step 2: Generating beginner summary with OpenAI...\n")
-        summary = summarize_with_openai(project_info)
+    a = analyze(vr)
+    s = a["stats"]
+    print(f"\n{meta['full_name']}")
+    print(f"  {s['files']} files, {s['lines']:,} lines ({s['code_lines']:,} code)")
+    print(f"  {s['classes']} classes, {s['functions']} functions, {s['methods']} methods, {s['routes']} HTTP routes")
+    if a["languages"]:
+        print("  Languages: " + ", ".join(f"{l['name']} ({l['lines']:,})" for l in a["languages"][:6]))
+    if a["frameworks"]:
+        print("  Stack: " + ", ".join(a["frameworks"] + a["infra"]))
+    for e in a["entry_points"][:5]:
+        print(f"  Entry: {e['path']} — {e['reason']}")
 
-        if not summary.strip() or summary.startswith("❌"):
-            print(f"\n{summary}\n")
-            return
+    repo_map = build_repo_map(meta, a, vr.paths)
+    if args.map:
+        print("\n" + repo_map)
 
-        print("\n" + "=" * 60)
-        print("📘  BEGINNER-FRIENDLY PROJECT SUMMARY")
-        print("=" * 60)
-        print(summary)
-        print("=" * 60 + "\n")
-
-        out = f"{project_info['name']}_summary.md"
-        with open(out, "w") as f:
-            f.write(f"# {project_info['name']} — Beginner Summary\n\n{summary}")
-        print(f"💾  Saved to: {out}\n")
-
-    finally:
-        if work_dir:
-            shutil.rmtree(work_dir, ignore_errors=True)
+    if args.ask:
+        if not llm.is_configured():
+            sys.exit("\nSet OPENAI_API_KEY to ask questions.")
+        files, _ = build_file_pack(vr, a, max_total_chars=90_000 if not args.deep else 300_000)
+        req = llm.validate({
+            "mode": "deep" if args.deep else "fast",
+            "repo": {"map": repo_map, "key": meta["full_name"]},
+            "messages": [{"role": "user", "content": args.ask}],
+            "context": [{"path": f["path"], "start": 1, "text": f["content"]} for f in files],
+        })
+        print()
+        import json
+        full, shown, hold = "", 0, len(llm.FOLLOWUP_MARKER)
+        for event in llm.stream_chat(req):
+            if event.startswith("event: delta"):
+                full += json.loads(event.split("data: ", 1)[1])["t"]
+                cut = full.find(llm.FOLLOWUP_MARKER)
+                safe = cut if cut >= 0 else max(shown, len(full) - hold)
+                sys.stdout.write(full[shown:safe])
+                sys.stdout.flush()
+                shown = safe
+            elif event.startswith("event: error"):
+                sys.exit("\nError: " + json.loads(event.split("data: ", 1)[1])["message"])
+        if llm.FOLLOWUP_MARKER not in full:
+            sys.stdout.write(full[shown:])
+        print()
 
 
 if __name__ == "__main__":

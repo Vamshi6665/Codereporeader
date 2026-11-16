@@ -1,122 +1,128 @@
-# CodeRepoReader 🔍 — OpenAI SDK + Vercel
+# CodeRepoReader
 
-> AI-powered repository intelligence. Upload a project (ZIP) or paste a GitHub
-> URL, then ask natural-language questions about its architecture, patterns,
-> metrics, and code quality.
+**Chat with any codebase.** Paste a public GitHub link or upload a ZIP, then ask questions in plain English. Answers stream in, cite the exact files and lines they come from, and can draw architecture diagrams.
 
-This version runs the chat through the **OpenAI Python SDK** and deploys as a
-**Vercel serverless function**.
+**Live app → [code-reporeader.vercel.app](https://code-reporeader.vercel.app)**
 
----
-
-## What changed from the original
-
-| Original (local Flask) | This version (Vercel) |
-|---|---|
-| Raw `requests` calls to GitHub Models REST API | **OpenAI SDK** (`from openai import OpenAI`), configurable `base_url` |
-| Long-running local server (`python run.py`) | **Serverless function** under `api/`, routed by `vercel.json` |
-| In-memory `analysis_cache` keyed by session | **Stateless** — analysis context is returned to the browser and sent back with each chat |
-| `git clone` subprocess for GitHub URLs | **GitHub tarball API** download (no `git` binary, works on read-only FS) |
-| Server-Sent-Events streaming | **Non-streaming** JSON response (reliable on Vercel) + client-side typing animation |
+![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
+![Flask](https://img.shields.io/badge/Flask-3-000000?logo=flask&logoColor=white)
+![React](https://img.shields.io/badge/React-19-149ECA?logo=react&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-7-3178C6?logo=typescript&logoColor=white)
+![OpenAI](https://img.shields.io/badge/OpenAI-GPT--5.6-412991?logo=openai&logoColor=white)
+![Vercel](https://img.shields.io/badge/Deployed%20on-Vercel-000000?logo=vercel&logoColor=white)
 
 ---
 
-## Project layout
+## Features
 
-```
-deepsynth-vercel/
-├── api/
-│   ├── index.py          # Flask app (the Vercel Python function) — all routes
-│   ├── analyzer.py       # project structure + key-file collection
-│   ├── code_analyzer.py  # deep static analysis (Python AST, JS/Java/C# regex)
-│   └── github_fetch.py   # download + extract a repo tarball (replaces git clone)
-├── templates/
-│   └── index.html        # single-page UI
-├── requirements.txt      # flask, requests, openai
-├── vercel.json           # function config (60s max duration)
-├── local_server.py       # run locally exactly as it runs on Vercel
-├── cli.py                # optional CLI (also OpenAI-SDK based)
-├── summarizer.py         # beginner-summary generator (OpenAI SDK)
-└── .env.example          # documents the environment variables
+- **Streaming answers.** Tokens arrive as they're written, with a Stop button, Regenerate, and edit-and-resend.
+- **Answers that cite their sources.** Citations like `api/index.py:139–229` are clickable and open the file at those lines.
+- **No visible token limits.** Each question retrieves the most relevant code from the whole repository. Older turns are condensed instead of dropped, and an answer that hits the output cap continues automatically in the same stream.
+- **Fast and Deep modes.** Fast uses GPT-5.6 Luna for quick answers. Deep uses GPT-5.6 Terra, reads about three times more code, and reasons longer.
+- **@file attachments.** Type `@` to attach a file so the answer reads all of it.
+- **Diagrams.** Ask for an architecture or request-flow diagram and it renders as Mermaid in the chat.
+- **Repository panel.** Stats, languages, stack, entry points, HTTP routes, a file tree, symbol search and a syntax-highlighted file viewer.
+- **Chats are saved in the browser.** Multiple chats per repository, search, export to Markdown. Nothing is stored on the server.
+- **Graphite theme** in dark and light, keyboard shortcuts, and a mobile layout.
+
+## How it works
+
+```mermaid
+flowchart LR
+  B["Browser app<br/>React + Vite"] -->|question + retrieved code| E["Vercel edge<br/>CDN, rate limit"]
+  E --> F["Python function<br/>Flask on Fluid compute"]
+  F -->|stream| O["OpenAI API"]
+  F --> G["GitHub<br/>tarball by commit"]
+  F -. SSE stream .-> B
+  B --- L["Local retrieval<br/>BM25 over code chunks"]
 ```
 
----
+1. **Resolve.** `/api/resolve` turns a GitHub link into an exact commit SHA.
+2. **Analyze once per commit.** `/api/analyze` downloads that commit's tarball into memory and runs static analysis: Python `ast` plus language-aware patterns for JS/TS, Java, Kotlin, C#, Go, Rust, Ruby, PHP and Swift. It returns stats, symbols, routes, a compact repository map, and the source files. A commit never changes, so **Vercel's CDN caches the result**: a popular repository is analyzed once and served to everyone after that.
+3. **Retrieve in the browser.** The browser indexes the code with BM25 and code-aware boosts for identifiers, file names and symbols. For each question it sends only the best excerpts. That keeps requests small and cheap, and it scales with the number of users at no extra cost.
+4. **Answer on the server.** `/api/chat` builds a prompt with a cache-friendly prefix (instructions, then the repository map), streams the model's answer as Server-Sent Events, sends heartbeats while the model thinks, and continues automatically if the answer is cut off.
 
-## Deploy to Vercel
+## Deploy your own
 
-Vercel has native Flask support: it detects the `Flask` instance named `app` in
-`api/index.py`, builds the whole app as a **single serverless function**, and
-routes every request into it. No `builds`/`routes` config is needed — `vercel.json`
-only sets the function's max duration.
+1. **Fork or import** this repository at [vercel.com/new](https://vercel.com/new). The included `vercel.json` sets everything up: the Vite build, one Python function, and routing.
+2. **Add environment variables** under *Project → Settings → Environment Variables*:
 
-### Option A — GitHub + Vercel dashboard (recommended)
+   | Variable | Required | Purpose |
+   |---|---|---|
+   | `OPENAI_API_KEY` | Yes | Your OpenAI key. It stays on the server; the browser never sees it. |
+   | `GITHUB_TOKEN` | Recommended | A fine-grained token with read-only access to public repositories. Raises GitHub's limit from 60 to 5,000 requests per hour. |
+   | `OPENAI_MODEL_FAST` / `OPENAI_MODEL_DEEP` | No | Defaults: `gpt-5.6-luna` / `gpt-5.6-terra`. |
+   | `CHAT_LIMIT_PER_MINUTE` / `CHAT_LIMIT_PER_DAY` | No | Per-IP limits. Defaults: 12 and 300. |
+   | `GLOBAL_CHAT_LIMIT_PER_DAY` | No | A ceiling for the whole site (0 = off). |
+   | `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | No | Makes rate limits exact across instances. |
 
-1. Push this folder to a GitHub repository.
-2. Go to [vercel.com/new](https://vercel.com/new) and import the repo.
-3. Framework preset: **Other** (the included `vercel.json` handles everything).
-4. Under **Settings → Environment Variables**, add:
-   - `OPENAI_API_KEY` = your OpenAI key (so users don't have to paste one).
-   - *(optional)* `OPENAI_MODEL` = e.g. `gpt-4o-mini`.
-   - *(optional)* `OPENAI_BASE_URL` = an OpenAI-compatible endpoint (see below).
-5. Click **Deploy**. Open the resulting URL.
+   See [`.env.example`](.env.example) for every option.
+3. **Deploy.** Every push to `main` redeploys automatically.
 
-### Option B — Vercel CLI
-
-```bash
-npm i -g vercel
-cd deepsynth-vercel
-vercel            # first deploy (preview)
-vercel env add OPENAI_API_KEY      # paste your key
-vercel --prod     # production deploy
-```
-
----
+**Before sharing the link widely:** set a monthly spending limit in your OpenAI dashboard, and add a rate-limit rule in Vercel's Firewall (the Hobby plan allows one) for `/api/chat`.
 
 ## Run locally
 
 ```bash
-cd deepsynth-vercel
-python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
+npm install
 pip install -r requirements.txt
-export OPENAI_API_KEY=sk-...                          # or paste it in the sidebar
-python local_server.py
+npm run build
+export OPENAI_API_KEY=sk-...
+python local_server.py            # http://localhost:5000
 ```
 
-Open http://localhost:5000.
+For frontend development with hot reload, run `python local_server.py --api-only` in one terminal and `npm run dev` in another (opens http://localhost:5173).
 
----
+**No API key?** A mock model streams realistic answers for free:
 
-## Using a different provider
+```bash
+python dev/mock_openai.py
+OPENAI_API_KEY=mock OPENAI_BASE_URL=http://localhost:8787/v1 python local_server.py
+```
 
-The OpenAI SDK's `base_url` is configurable, so any OpenAI-compatible endpoint
-works. Set `OPENAI_BASE_URL` (env var) and use that provider's key:
+### Command line
 
-- **OpenAI (default):** leave `OPENAI_BASE_URL` unset; key is `sk-...`.
-- **GitHub Models (free tier):** `OPENAI_BASE_URL=https://models.github.ai/inference`,
-  key = a GitHub Personal Access Token. Models are named like `openai/gpt-4o`.
-- **Azure OpenAI / OpenRouter / local vLLM:** point `OPENAI_BASE_URL` at the
-  endpoint and set the matching key.
+```bash
+python cli.py https://github.com/pallets/flask                 # stats, stack, entry points
+python cli.py . --map                                           # the repository map the model sees
+python cli.py . --ask "How is the database connection managed?" # stream an answer
+```
 
----
+## Project structure
 
-## Notes & limits on Vercel
+```
+api/index.py            Flask app, the single Vercel function (routes, limits, caching headers)
+server/
+  repo_source.py        GitHub resolve + tarball / ZIP / folder loading, entirely in memory
+  repo_analysis.py      static analysis, symbols, routes, stack detection, repository map
+  llm.py                prompt assembly, streaming, auto-continue, error mapping
+  ratelimit.py          per-IP limits (in-memory or Upstash Redis)
+web/
+  src/store.ts          app state, streaming, persistence
+  src/lib/retrieval.ts  chunking + BM25 retrieval in the browser
+  src/lib/api.ts        API client and SSE parser
+  src/components/       sidebar, chat, composer, Markdown/Mermaid, repository panel
+  src/styles/app.css    Graphite design tokens and components
+dev/mock_openai.py      OpenAI-compatible mock for local testing
+cli.py                  terminal version
+local_server.py         serves dist/ + the API, like Vercel does
+vercel.json             build, function, routing and security headers
+```
 
-- **Upload size:** Vercel caps request bodies at ~4.5 MB, so ZIP uploads must be
-  small. For larger projects, use the **GitHub URL** option — the server
-  downloads the tarball itself and bypasses the request-body limit.
-- **Function duration:** `vercel.json` sets `maxDuration: 60`. Large models on
-  long prompts can be slow; `gpt-4o-mini` is a good default.
-- **API key handling:** if `OPENAI_API_KEY` is set on the server, the sidebar key
-  field is optional. A key pasted in the sidebar takes precedence for that request.
-- **GitHub rate limits:** unauthenticated tarball downloads are limited per IP.
-  Paste a GitHub token in the sidebar to raise the limit (or for private repos).
+## Security and privacy
 
----
+- The OpenAI key is read only from the server's environment. No request can change the key or the endpoint the server calls.
+- Requests from other websites' pages are rejected, and every IP is rate-limited.
+- Files that look like secrets (`.env`, private keys, credentials) are never read, sent to the model, or cached.
+- Uploaded ZIPs are processed in memory and never stored. Analyses of public commits are cached by Vercel's CDN.
+- Chats and analyzed code live in the user's browser (IndexedDB). Each question and its code excerpts are sent to OpenAI to write the answer.
 
-## Example questions
+## Limits
 
-- "Explain the high-level architecture."
-- "How many public classes are there?"
-- "What design patterns are used?"
-- "Any code quality issues or improvements?"
-- "How do I run this project?"
+- Public GitHub repositories up to 80 MB compressed; ZIP uploads up to 4.3 MB (Vercel's request size limit).
+- About 3 MB of the highest-priority source is loaded for search; very large repositories are analyzed in full but searched over their most important files.
+- One request can run for up to 300 seconds on Vercel's Hobby plan; streaming answers usually finish well within that.
+
+## Research
+
+This project is the implementation behind *CodeRepoReader AI: A Comparative Study of Multi-Model SDKs for Conversational Codebase Analysis Agent* (Northwest Missouri State University).
