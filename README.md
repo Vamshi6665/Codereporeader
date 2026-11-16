@@ -2,7 +2,7 @@
 
 **Chat with any codebase.** Paste a public GitHub link or upload a ZIP, then ask questions in plain English. Answers stream in, cite the exact files and lines they come from, and can draw architecture diagrams.
 
-**Live app → [code-reporeader.vercel.app](https://code-reporeader.vercel.app)**
+**Live app → [codereporeader.vercel.app](https://codereporeader.vercel.app)**
 
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![Flask](https://img.shields.io/badge/Flask-3-000000?logo=flask&logoColor=white)
