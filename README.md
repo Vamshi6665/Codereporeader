@@ -2,7 +2,9 @@
 
 **Chat with any codebase.** Paste a public GitHub link or upload a ZIP, then ask questions in plain English. Answers stream in, cite the exact files and lines they come from, and can draw architecture diagrams.
 
-**Live app → [codereporeader.vercel.app](https://codereporeader.vercel.app)**
+### 🔗 Live app: [https://codereporeader.vercel.app](https://codereporeader.vercel.app)
+
+[![Open the live app](https://img.shields.io/badge/Open%20the%20live%20app-codereporeader.vercel.app-5E63F0?style=for-the-badge&logo=vercel&logoColor=white)](https://codereporeader.vercel.app)
 
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
 ![Flask](https://img.shields.io/badge/Flask-3-000000?logo=flask&logoColor=white)
@@ -57,7 +59,7 @@ flowchart LR
    | `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` | No | Makes rate limits exact across instances. |
 
    See [`.env.example`](.env.example) for every option.
-3. **Deploy.** Every push to `main` redeploys automatically.
+3. **Deploy.** Every push to `main` redeploys automatically. This project's production URL is **https://codereporeader.vercel.app**.
 
 **Before sharing the link widely:** set a monthly spending limit in your OpenAI dashboard, and add a rate-limit rule in Vercel's Firewall (the Hobby plan allows one) for `/api/chat`.
 
