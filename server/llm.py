@@ -45,18 +45,30 @@ def _env_int(name, default):
 API_KEY = _env("OPENAI_API_KEY", "")
 BASE_URL = _env("OPENAI_BASE_URL", "") or None
 
+def _label(model, explicit_env):
+    """Human label for a model id, so the UI always names the model actually in use."""
+    explicit = _env(explicit_env, "")
+    if explicit:
+        return explicit
+    known = {"gpt-5.6-luna": "GPT-5.6 Luna", "gpt-5.6-terra": "GPT-5.6 Terra", "gpt-5.6-sol": "GPT-5.6 Sol"}
+    return known.get(model, model)
+
+
+_FAST_MODEL = _env("OPENAI_MODEL_FAST", _env("OPENAI_MODEL", "gpt-5.6-luna"))
+_DEEP_MODEL = _env("OPENAI_MODEL_DEEP", "gpt-5.6-terra")
+
 MODES = {
     "fast": {
-        "model": _env("OPENAI_MODEL_FAST", _env("OPENAI_MODEL", "gpt-5.6-luna")),
-        "label": _env("OPENAI_MODEL_FAST_LABEL", "GPT-5.6 Luna"),
+        "model": _FAST_MODEL,
+        "label": _label(_FAST_MODEL, "OPENAI_MODEL_FAST_LABEL"),
         "context_chars": _env_int("CONTEXT_CHARS_FAST", 110_000),
         "history_chars": _env_int("HISTORY_CHARS_FAST", 48_000),
         "max_output_tokens": _env_int("MAX_OUTPUT_TOKENS_FAST", 8_000),
         "reasoning_effort": _env("REASONING_EFFORT_FAST", "low"),
     },
     "deep": {
-        "model": _env("OPENAI_MODEL_DEEP", "gpt-5.6-terra"),
-        "label": _env("OPENAI_MODEL_DEEP_LABEL", "GPT-5.6 Terra"),
+        "model": _DEEP_MODEL,
+        "label": _label(_DEEP_MODEL, "OPENAI_MODEL_DEEP_LABEL"),
         "context_chars": _env_int("CONTEXT_CHARS_DEEP", 360_000),
         "history_chars": _env_int("HISTORY_CHARS_DEEP", 140_000),
         "max_output_tokens": _env_int("MAX_OUTPUT_TOKENS_DEEP", 16_000),
